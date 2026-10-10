@@ -64,6 +64,7 @@ export class PayPal {
         paypal: {
           experience_context: {
             brand_name: 'AtlasOfOne',
+            locale: 'en-US',
             user_action: 'PAY_NOW',
             shipping_preference: 'NO_SHIPPING',
             return_url: returnUrl,
