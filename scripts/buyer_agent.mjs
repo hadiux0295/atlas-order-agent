@@ -158,7 +158,8 @@ Rules: without a mandate you never pay — only your owner approves a payment, t
       try {
         const r = await generateText({
           model: createGoogleGenerativeAI({ apiKey: keys[k] })(model), system, prompt: goal, tools,
-          stopWhen: stepCountIs(30), maxRetries: 0,
+          // per-step retries with backoff ride out a per-minute rate limit without re-running the goal
+          stopWhen: stepCountIs(30), maxRetries: 4,
           providerOptions: { google: { thinkingConfig: { thinkingLevel: 'minimal' } } },
         });
         say('agent', r.text);
