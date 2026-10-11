@@ -14,7 +14,11 @@ fetch('/api/config').then((r) => r.json()).then((c) => {
   $('#who').textContent = c.model ? `AI shop assistant · ${name}` : 'Shop assistant';
 }).catch(() => {});
 
-const scroll = () => { log.scrollTop = log.scrollHeight; };
+// a new proof stays pinned at the top of the chat (the cover is what the buyer must see) until they answer
+let pin = null;
+const scroll = () => {
+  log.scrollTop = pin ? log.scrollTop + pin.getBoundingClientRect().top - log.getBoundingClientRect().top - 12 : log.scrollHeight;
+};
 function bubble(text, who) {
   const d = document.createElement('div');
   d.className = `msg ${who}`;
@@ -26,6 +30,7 @@ function bubble(text, who) {
 async function say(text, action) {
   text = text.trim();
   if (!text) return;
+  pin = null;
   bubble(text, 'me');
   input.value = ''; sendBtn.disabled = true; $('#chips').hidden = true;
   const t = document.createElement('div'); t.className = 'typing'; t.innerHTML = '<i></i><i></i><i></i>'; log.append(t); scroll();
@@ -65,7 +70,8 @@ function renderCard(c) {
     $('.sub', n).textContent = `${c.airportName} · ${c.airport} · $${c.price} · watermark removed after payment`;
     $('.ok', n).addEventListener('click', () => say("Looks good — let's check out.", 'checkout'));
     $('.change', n).addEventListener('click', () => { input.value = 'Please change '; input.focus(); });
-    log.append(n); n.querySelectorAll('img').forEach((i) => i.addEventListener('load', scroll));
+    pin = n;
+    log.append(n); scroll(); n.querySelectorAll('img').forEach((i) => i.addEventListener('load', scroll));
   } else if (c.type === 'checkout') {
     const n = $('#t-checkout').content.firstElementChild.cloneNode(true);
     $('.what', n).textContent = `${c.child}'s Airport Mazes (PDF)`;
