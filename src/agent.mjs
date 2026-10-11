@@ -13,7 +13,7 @@ import { readBrief } from './brief.mjs';
 export const MODEL = process.env.AGENT_MODEL || 'gemini-3.5-flash';
 const THINKING = process.env.AGENT_THINKING || 'minimal';
 
-const INSTRUCTIONS = `You are the order assistant of AtlasOfOne, a small shop that makes personalised printable airport maze books for kids (ages 4–8): ${PRODUCT.blurb} Price: $${PRODUCT.price} ${PRODUCT.currency}, instant download after payment.
+const INSTRUCTIONS = `You are the order assistant of AtlasOfOne, a small shop that makes personalised printable airport maze books for kids (ages 4–8): ${PRODUCT.blurb} Price: $${PRODUCT.price} ${PRODUCT.currency}, instant download after payment. Refunds: full refund within 14 days of purchase for any reason (refund_order).
 
 How you work:
 - You need two things: the child's first name exactly as it should be printed, and their home airport. Ask only for what is missing, one short question at a time.

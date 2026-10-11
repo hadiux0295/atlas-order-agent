@@ -66,6 +66,15 @@ try {
     await page.waitForTimeout(3000);
   }
   await shot(page, 'final');
+  if (process.env.REFUND) { // unhappy path: ask the agent for a refund in the same chat
+    const dl = await steps.locator('a.dl').getAttribute('href');
+    await page.fill('#text', 'Oh no, I spelled the name wrong. Please refund this order.');
+    await page.click('#send');
+    await page.waitForFunction(() => [...document.querySelectorAll('.msg.bot')].some((m) => /Refund \S+ ·/.test(m.textContent)), null, { timeout: 60000 });
+    lap('refund card: ' + (await page.locator('.msg.bot').filter({ hasText: /^Refund / }).last().innerText()));
+    lap('download after refund → HTTP ' + (await page.request.get(BASE + dl)).status());
+    await shot(page, 'refunded');
+  }
 } catch (e) {
   await shot(page, 'error').catch(() => {});
   console.error('E2E ERROR', e.message.split('\n')[0]);

@@ -63,6 +63,7 @@ const shop = {
     const o = orders[orderId];
     if (!o?.captureId) return { error: 'this order has not been paid' };
     if (o.status === 'refunded') return { error: 'already refunded', refundId: o.refundId };
+    if (Date.now() - Date.parse(o.created) > 14 * 86400_000) return { error: 'the 14-day refund window has passed' };
     const r = await tool.execute({ capture_id: o.captureId, note_to_payer: `AtlasOfOne refund: ${reason}`.slice(0, 255) }, {});
     if (!r?.id) return { error: 'PayPal did not accept the refund', detail: JSON.stringify(r).slice(0, 300) };
     if (o.token) fs.rmSync(path.join(DATA, 'dl', `${o.token}.zip`), { force: true });
