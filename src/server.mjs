@@ -11,7 +11,7 @@ import { PayPal, loadEnvFile } from './paypal.mjs';
 import { render, zip } from './renderer.mjs';
 import { PRODUCT, byIcao, label } from './catalog.mjs';
 import { personalise, proofImages, hasBase, newId, NAME_RE } from './proof.mjs';
-import { ShopAgent, MODEL } from './agent.mjs';
+import { ShopAgent, MODEL, toolResult } from './agent.mjs';
 
 const PORT = +(process.env.PORT || 8742);
 const PUBLIC_URL = (process.env.PUBLIC_URL || `http://localhost:${PORT}`).replace(/\/$/, '');
@@ -64,8 +64,10 @@ const shop = {
     if (!o?.captureId) return { error: 'this order has not been paid' };
     if (o.status === 'refunded') return { error: 'already refunded', refundId: o.refundId };
     if (Date.now() - Date.parse(o.created) > 14 * 86400_000) return { error: 'the 14-day refund window has passed' };
-    const r = await tool.execute({ capture_id: o.captureId, note_to_payer: `AtlasOfOne refund: ${reason}`.slice(0, 255) }, {});
-    if (!r?.id) return { error: 'PayPal did not accept the refund', detail: JSON.stringify(r).slice(0, 300) };
+    let r = toolResult(await tool.execute({ capture_id: o.captureId, note_to_payer: `AtlasOfOne refund: ${reason}`.slice(0, 255) }, {}));
+    // a retry after a refund we failed to record: PayPal is the source of truth
+    if (!r?.id && /already been fully refunded/i.test(r?.message || '')) r = { id: o.refundId || 'already-refunded', status: 'COMPLETED' };
+    if (!r?.id) { log('errors.log', { orderId, refund: r }); return { error: 'PayPal did not accept the refund', detail: String(r?.message || '').slice(0, 200) }; }
     if (o.token) fs.rmSync(path.join(DATA, 'dl', `${o.token}.zip`), { force: true });
     update(orderId, { status: 'refunded', refundId: r.id, refundStatus: r.status, refundReason: reason, token: null });
     return { refundId: r.id, status: r.status };

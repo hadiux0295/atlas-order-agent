@@ -10,6 +10,9 @@ import { PRODUCT, AIRPORTS, findAirports, byIcao, label } from './catalog.mjs';
 import { NAME_RE } from './proof.mjs';
 import { readBrief } from './brief.mjs';
 
+// PayPal Agent Toolkit tools return a JSON *string* ({ok:false,status,code,message} on errors), not an object.
+export const toolResult = (r) => { if (typeof r !== 'string') return r; try { return JSON.parse(r); } catch { return { raw: r }; } };
+
 export const MODEL = process.env.AGENT_MODEL || 'gemini-3.5-flash';
 const THINKING = process.env.AGENT_THINKING || 'minimal';
 
@@ -106,7 +109,7 @@ export class ShopAgent {
         execute: async ({ order_id }) => {
           if (!order_id || !s.orders.has(order_id)) order_id = s.lastOrder;
           if (!order_id) return { error: 'no order in this chat yet' };
-          const o = await this.pp.get_order.execute({ id: order_id }, {});
+          const o = toolResult(await this.pp.get_order.execute({ id: order_id }, {}));
           const ours = this.shop.orderOf(order_id) || {};
           return { paypal_status: o?.status, fulfilment: ours.status, download_ready: ours.status === 'ready' };
         },
