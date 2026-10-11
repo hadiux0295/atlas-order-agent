@@ -1,0 +1,78 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>AtlasOfOne — Airport Maze Books</title>
+<meta name="description" content="Tell our shop assistant who it's for and where you fly from. See the real cover with their name before you pay.">
+<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600&family=Barlow+Condensed:wght@600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<header class="bar">
+  <a class="logo" href="/"><svg viewBox="0 0 24 28" aria-hidden="true"><path d="M12 1 2 27h5l5-13 5 13h5z" fill="#0E1828"/><path d="M12 14 7 27h10z" fill="#F4AE45"/></svg>ATLAS OF <b>ONE</b></a>
+  <span class="pill" title="PayPal sandbox — no real money moves">Sandbox demo</span>
+</header>
+
+<main class="wrap">
+  <section class="hero">
+    <p class="kicker">Personalised airport maze book · ages 4–8</p>
+    <h1>Their airport.<br>Their name.<br><span>Their maze book.</span></h1>
+    <p class="lede">Tell our shop assistant who it's for and where you fly from. You see the real cover with their name <em>before</em> you pay — then download the printable book in seconds.</p>
+    <ul class="facts">
+      <li><b>3 mazes</b> on the real taxiways</li>
+      <li><b>Pilot certificate</b> with their name</li>
+      <li><b>$9.99</b> · PDF, Letter + A4</li>
+    </ul>
+    <figure class="sample">
+      <img src="/img/sample_cover.png" alt="Sample cover: Mia's Airport Mazes, Los Angeles (LAX)" width="408" height="528">
+      <img src="/img/sample_maze.png" alt="Sample maze page on the real LAX taxiways" width="408" height="528">
+    </figure>
+  </section>
+
+  <section class="chat" aria-label="Order assistant">
+    <div class="chat-head">
+      <div class="avatar" aria-hidden="true">✈</div>
+      <div><b>Order assistant</b><small id="who">AI shop assistant</small></div>
+    </div>
+    <div id="log" class="log" aria-live="polite">
+      <div class="msg bot">Hi! Who is the book for, and which airport do you fly from? A city or a code like <b>LAX</b> is enough.</div>
+    </div>
+    <div id="chips" class="chips">
+      <button type="button" data-say="My 5-year-old Mia loves planes — we fly out of LAX.">Mia · LAX</button>
+      <button type="button" data-say="It's a gift for my grandson Noah, we live near Heathrow.">Noah · Heathrow</button>
+      <button type="button" data-say="Which airports can you draw?">Which airports?</button>
+    </div>
+    <form id="ask" class="ask" autocomplete="off">
+      <input id="text" maxlength="500" placeholder="e.g. Ava, 6, we fly from Chicago O'Hare" aria-label="Message">
+      <button id="send" aria-label="Send"><svg viewBox="0 0 24 24"><path d="M3 11 21 3l-8 18-2-8z" fill="currentColor"/></svg></button>
+    </form>
+  </section>
+</main>
+
+<footer class="foot">
+  <p><b>AI disclosure:</b> replies are written by an AI model (<span id="model">Google Gemini</span>). It can make mistakes — check the proof before paying. Prices and orders come from the shop, not the AI.</p>
+  <p>PayPal <b>sandbox</b> — test accounts only, no real money moves. Map data © OpenStreetMap contributors. For play, not navigation.</p>
+</footer>
+
+<template id="t-proof">
+  <div class="card proof">
+    <div class="pages"><img class="cover" alt=""><img class="maze" alt=""></div>
+    <div class="meta"><b class="title"></b><span class="sub"></span></div>
+    <div class="row"><button type="button" class="primary ok">Looks good — check out</button><button type="button" class="ghost change">Change something</button></div>
+  </div>
+</template>
+<template id="t-checkout">
+  <div class="card checkout">
+    <div class="line"><span class="what"></span><b class="amt"></b></div>
+    <div class="pay"><paypal-button type="pay" class="paypal-gold" hidden></paypal-button><span class="hint">Loading PayPal…</span></div>
+    <ol class="steps"><li data-s="pay">Pay with PayPal</li><li data-s="paid">Payment confirmed by PayPal</li><li data-s="make">Drawing the book</li><li data-s="ready">Ready to download</li></ol>
+    <a class="primary dl" hidden>Download the book (zip)</a>
+  </div>
+</template>
+
+<script src="https://www.sandbox.paypal.com/web-sdk/v6/core" async></script>
+<script src="/app.js" type="module"></script>
+</body>
+</html>

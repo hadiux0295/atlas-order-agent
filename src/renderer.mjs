@@ -15,17 +15,27 @@ function run(cmd, args, opts) {
   });
 }
 
-async function renderPrivate({ ident, child }) {
+const mazesDir = () => {
+  if (!process.env.PIPELINE_ROOT) throw new Error('PIPELINE_ROOT not set');
+  return path.join(process.env.PIPELINE_ROOT, 'scripts/etsy_lane/taxiway_mazes');
+};
+
+// Book HTML for a legacy form order (no proof step): generate it with the pipeline.
+async function generateBook({ ident, child }) {
   const root = process.env.PIPELINE_ROOT;
-  if (!root) throw new Error('PIPELINE_ROOT not set');
-  const mz = path.join(root, 'scripts/etsy_lane/taxiway_mazes');
   const graph = path.join(root, 'temp/etsy_lane/mazes', `${ident}_graph.json`);
-  if (!fs.existsSync(graph)) await run('python3', [path.join(mz, 'fetch_graph.py'), ident], { cwd: root });
-  const out = await run('python3', [path.join(mz, 'gen.py'), ident, '--name', child], { cwd: root });
+  if (!fs.existsSync(graph)) await run('python3', [path.join(mazesDir(), 'fetch_graph.py'), ident], { cwd: root });
+  const out = await run('python3', [path.join(mazesDir(), 'gen.py'), ident, '--name', child], { cwd: root });
   const book = out.match(/→ (\S+book\.html)/)?.[1];
   if (!book) throw new Error('gen.py: no book.html in output');
-  await run('node', [path.join(mz, 'render.mjs'), book, '--paper', 'both'], {
-    cwd: root, env: { ...process.env, NODE_PATH: path.resolve('node_modules') },
+  return book;
+}
+
+// order.bookHtml = the personalised book the buyer approved as a proof → Letter + A4 PDFs.
+async function renderPrivate(order) {
+  const book = order.bookHtml || await generateBook(order);
+  await run('node', [path.join(mazesDir(), 'render.mjs'), book, '--paper', 'both'], {
+    cwd: process.env.PIPELINE_ROOT, env: { ...process.env, NODE_PATH: path.resolve('node_modules') },
   });
   const dir = path.dirname(book);
   return fs.readdirSync(dir).filter((f) => f.endsWith('.pdf')).map((f) => path.join(dir, f));

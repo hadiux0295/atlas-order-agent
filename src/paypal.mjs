@@ -34,6 +34,21 @@ export class PayPal {
     return this._tok.value;
   }
 
+  // Browser-safe client token for JS SDK v6 (15 min, sdk_init scope only — never the server token).
+  async clientToken() {
+    const r = await fetch(this.apiBase + '/v1/oauth2/token', {
+      method: 'POST',
+      headers: {
+        Authorization: 'Basic ' + Buffer.from(`${this.clientId}:${this.clientSecret}`).toString('base64'),
+        'Content-Type': 'application/x-www-form-urlencoded',
+      },
+      body: 'grant_type=client_credentials&response_type=client_token&intent=sdk_init',
+    });
+    const j = await r.json();
+    if (!r.ok) throw new Error(`client token ${r.status}: ${j.error_description || j.error}`);
+    return j.access_token;
+  }
+
   // body: object → JSON, string → sent as-is (needed to embed a raw webhook body byte-for-byte)
   async api(method, path, body, headers = {}) {
     const r = await fetch(this.apiBase + path, {
@@ -51,14 +66,18 @@ export class PayPal {
     return json;
   }
 
-  createOrder({ sku, description, amount, customId, returnUrl, cancelUrl }) {
+  // Digital good: NO_SHIPPING (the toolkit's create_order can't set it, so orders are created here),
+  // one line item so the PayPal review page shows what is being bought.
+  createOrder({ sku, description, amount, customId, returnUrl, cancelUrl, itemName }) {
     return this.api('POST', '/v2/checkout/orders', {
       intent: 'CAPTURE',
       purchase_units: [{
         reference_id: sku,
         custom_id: customId,
         description,
-        amount: { currency_code: 'USD', value: amount },
+        amount: { currency_code: 'USD', value: amount, breakdown: { item_total: { currency_code: 'USD', value: amount } } },
+        items: [{ name: (itemName || description).slice(0, 127), quantity: '1', category: 'DIGITAL_GOODS', sku,
+          unit_amount: { currency_code: 'USD', value: amount } }],
       }],
       payment_source: {
         paypal: {
