@@ -1,5 +1,6 @@
 // AtlasOfOne Order Agent: chat brief → watermarked proof → PayPal (JS SDK v6 button) → capture →
 // verified PAYMENT.CAPTURE.COMPLETED webhook → render → zip → download link. Refunds via the PayPal Agent Toolkit.
+// MCP: /mcp (Streamable HTTP) exposes the same tools to other agents (mcp.mjs).
 // Env: PAYPAL_ENV_FILE, PUBLIC_URL, PORT (8742), DATA_DIR (./data), RENDERER, PIPELINE_ROOT, GEMINI_API_KEY,
 //      AGENT_MODEL, SKIP_WEBHOOK=1 (local dev: never re-point the app's one webhook at localhost).
 import http from 'node:http';
@@ -12,6 +13,7 @@ import { render, zip } from './renderer.mjs';
 import { PRODUCT, byIcao, label } from './catalog.mjs';
 import { personalise, proofImages, hasBase, newId, NAME_RE } from './proof.mjs';
 import { ShopAgent, MODEL, toolResult } from './agent.mjs';
+import { createMcp } from './mcp.mjs';
 
 const PORT = +(process.env.PORT || 8742);
 const PUBLIC_URL = (process.env.PUBLIC_URL || `http://localhost:${PORT}`).replace(/\/$/, '');
@@ -34,6 +36,7 @@ const update = (id, patch) => { orders[id] = { ...orders[id], ...patch, updated:
 let refundTool = null;
 const shop = {
   available: hasBase,
+  abs: (p) => PUBLIC_URL + p,
   async makeProof(icao, child, session) {
     if (!hasBase(icao)) throw new Error(`no base book for ${icao}`);
     const proofId = newId(), dir = path.join(DATA, 'proofs', proofId);
@@ -56,7 +59,8 @@ const shop = {
     });
     update(o.id, { proofId, child: p.child, ident: p.icao, bookHtml: p.bookHtml, status: 'created', created: new Date().toISOString() });
     session?.orders.add(o.id);
-    return { orderId: o.id, proofId, amount: PRODUCT.price, child: p.child };
+    const approveUrl = o.links?.find((l) => l.rel === 'payer-action' || l.rel === 'approve')?.href;
+    return { orderId: o.id, proofId, amount: PRODUCT.price, child: p.child, approveUrl };
   },
   orderOf: (id) => orders[id],
   async refund(orderId, reason, tool = refundTool) {
@@ -76,6 +80,7 @@ const shop = {
 
 const agent = new ShopAgent({ paypalEnv: env, shop });
 refundTool = agent.pp.create_refund;
+const mcp = createMcp({ shop, pp: agent.pp });
 
 // ── fulfilment: runs once per capture id; a failed render refunds automatically (unhappy path) ──
 async function fulfil(orderId, captureId) {
@@ -119,7 +124,7 @@ const TYPES = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript', '
 
 // public chat costs model tokens → per-IP budget
 const hits = new Map();
-const limited = (ip) => { const now = Date.now(), h = (hits.get(ip) || []).filter((t) => now - t < 600_000); h.push(now); hits.set(ip, h); return h.length > 40; };
+const limited = (ip, max = 40, key = '') => { const k = key + ip, now = Date.now(), h = (hits.get(k) || []).filter((t) => now - t < 600_000); h.push(now); hits.set(k, h); return h.length > max; };
 
 let webhookId = null;
 
@@ -139,6 +144,13 @@ const server = http.createServer(async (req, res) => {
       return json(res, 200, { sdk: 'https://www.sandbox.paypal.com/web-sdk/v6/core', model: agent.google ? MODEL : null, price: PRODUCT.price });
     }
     if (req.method === 'GET' && p === '/api/paypal/client-token') return json(res, 200, { token: await pp.clientToken() });
+
+    // MCP door for other agents (same guarded tools as the chat). Before any body read: the transport reads the stream.
+    if (p === '/mcp') {
+      const ip = req.headers['cf-connecting-ip'] || req.socket.remoteAddress;
+      if (limited(ip, 150, 'mcp:')) return json(res, 429, { jsonrpc: '2.0', error: { code: -32000, message: 'rate limited — wait a few minutes' }, id: null });
+      return await mcp(req, res);
+    }
 
     if (req.method === 'POST' && p === '/api/chat') {
       const ip = req.headers['cf-connecting-ip'] || req.socket.remoteAddress;

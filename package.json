@@ -9,6 +9,8 @@
   },
   "dependencies": {
     "@ai-sdk/google": "^4.0.93",
+    "@ai-sdk/mcp": "2.0.73",
+    "@modelcontextprotocol/sdk": "1.32.1",
     "@paypal/agent-toolkit": "^1.11.0",
     "ai": "^7.0.137",
     "playwright": "^1.51.1",
