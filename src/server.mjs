@@ -27,10 +27,35 @@ fs.mkdirSync(DATA, { recursive: true });
 
 // ── tiny JSON stores ──
 const load = (f) => (fs.existsSync(path.join(DATA, f)) ? JSON.parse(fs.readFileSync(path.join(DATA, f), 'utf8')) : {});
-const orders = load('orders.json'), proofs = load('proofs.json');
-const save = () => { fs.writeFileSync(path.join(DATA, 'orders.json'), JSON.stringify(orders, null, 1)); fs.writeFileSync(path.join(DATA, 'proofs.json'), JSON.stringify(proofs, null, 1)); };
+const orders = load('orders.json'), proofs = load('proofs.json'), mandates = load('mandates.json');
+const save = () => { for (const [f, o] of [['orders.json', orders], ['proofs.json', proofs], ['mandates.json', mandates]]) fs.writeFileSync(path.join(DATA, f), JSON.stringify(o, null, 1)); };
 const log = (file, obj) => fs.appendFileSync(path.join(DATA, file), JSON.stringify({ t: new Date().toISOString(), ...obj }) + '\n');
 const update = (id, patch) => { orders[id] = { ...orders[id], ...patch, updated: new Date().toISOString() }; save(); };
+
+// ── agent mandates: on the first order the owner can let their agent reorder with the PayPal wallet that
+// payment saved (vault). Limits are ours to enforce — a vault token has none: the catalogue price per book
+// (no tool takes an amount), N books a day, an end date, one order per proof, revocable at any time. The
+// agent's token is stored only as a hash and handed out once, to the agent session that placed the order.
+const MANDATE = { perDay: 3, days: 30 };
+const sha = (t) => crypto.createHash('sha256').update(t).digest('hex');
+const pickup = new Map(); // orderId → mandate token, until the creating agent session collects it
+const DAY = 86400_000;
+const mandateView = (id) => {
+  const m = mandates[id];
+  if (!m) return null;
+  const usedToday = m.orders.filter((x) => Date.now() - x.at < DAY).length;
+  const active = !m.revoked && Date.now() < Date.parse(m.expires) && !!m.vaultId;
+  return { mandate_id: id, active, per_book: `$${PRODUCT.price}`, books_per_day: MANDATE.perDay, used_today: usedToday,
+    ends: m.expires.slice(0, 10), revoked: m.revoked || null, shop_only: 'AtlasOfOne' };
+};
+function mintMandate(orderId, vault) {
+  const token = 'atl_' + crypto.randomBytes(24).toString('hex'), id = newId(), now = new Date();
+  mandates[id] = { hash: sha(token), vaultId: vault.id, customerId: vault.customer?.id || null, fromOrder: orderId,
+    created: now.toISOString(), expires: new Date(+now + MANDATE.days * DAY).toISOString(), revoked: null, orders: [] };
+  pickup.set(orderId, token);
+  update(orderId, { mandateId: id }); // update() saves all three stores
+  log('mandates.log', { minted: id, fromOrder: orderId });
+}
 
 // ── shop operations (the agent's tools call these) ──
 let refundTool = null;
@@ -49,18 +74,63 @@ const shop = {
     session?.proofs.add(proofId);
     return { proofId, child, airport: label(a), airportName: a.name, price: PRODUCT.price, cover: `/p/${proofId}/cover.png`, maze: `/p/${proofId}/maze.png` };
   },
-  async createCheckout(proofId, session) {
+  async createCheckout(proofId, session, { saveWallet = false } = {}) {
     const p = proofs[proofId];
     const o = await pp.createOrder({
+      vault: saveWallet,
       sku: PRODUCT.sku, amount: PRODUCT.price, customId: proofId,
       description: `${PRODUCT.title} — ${p.icao} — for ${p.child}`.slice(0, 127),
       itemName: `${p.child}'s Airport Mazes — ${label(byIcao(p.icao))}`,
       returnUrl: `${PUBLIC_URL}/return`, cancelUrl: `${PUBLIC_URL}/cancel`,
     });
-    update(o.id, { proofId, child: p.child, ident: p.icao, bookHtml: p.bookHtml, status: 'created', created: new Date().toISOString() });
+    const paypalUrl = o.links?.find((l) => l.rel === 'payer-action' || l.rel === 'approve')?.href;
+    update(o.id, { proofId, child: p.child, ident: p.icao, bookHtml: p.bookHtml, status: 'created', created: new Date().toISOString(), paypalUrl, saveWallet });
     session?.orders.add(o.id);
-    const approveUrl = o.links?.find((l) => l.rel === 'payer-action' || l.rel === 'approve')?.href;
-    return { orderId: o.id, proofId, amount: PRODUCT.price, child: p.child, approveUrl };
+    // agents hand their owner our page first: what is bought, and what saving the wallet allows, before PayPal
+    return { orderId: o.id, proofId, amount: PRODUCT.price, child: p.child, approveUrl: `${PUBLIC_URL}/approve/${o.id}`, saveWallet };
+  },
+  mandateByToken(token) {
+    if (!/^atl_[0-9a-f]{48}$/.test(token || '')) return null;
+    const h = sha(token);
+    return Object.keys(mandates).find((id) => mandates[id].hash === h) || null;
+  },
+  mandateView,
+  takeMandateToken(orderId) { const t = pickup.get(orderId); pickup.delete(orderId); return t || null; },
+  // the agent pays alone: saved wallet, no redirect, PayPal returns the capture inline
+  async buyWithMandate(proofId, session, mandateId) {
+    const m = mandates[mandateId], v = mandateView(mandateId);
+    if (!v?.active) return { error: m?.revoked ? 'the owner revoked this mandate' : 'mandate not active (ended or unknown)' };
+    const p = proofs[proofId];
+    if (!p) return { error: 'unknown proof' };
+    const dup = m.orders.find((x) => x.proofId === proofId);
+    if (dup) return { order_id: dup.orderId, note: 'this proof was already bought with the mandate' };
+    if (v.used_today >= MANDATE.perDay) return { error: `daily limit reached (${MANDATE.perDay} books) — ask your owner` };
+    const o = await pp.chargeVault({
+      vaultId: m.vaultId, requestId: `mandate-${mandateId}-${proofId}`,
+      sku: PRODUCT.sku, amount: PRODUCT.price, customId: proofId,
+      description: `${PRODUCT.title} — ${p.icao} — for ${p.child} (agent reorder)`.slice(0, 127),
+      itemName: `${p.child}'s Airport Mazes — ${label(byIcao(p.icao))}`,
+    });
+    const cap = o.purchase_units?.[0]?.payments?.captures?.[0];
+    // write the order before anything else can look for it (the signed webhook follows within seconds)
+    update(o.id, { proofId, child: p.child, ident: p.icao, bookHtml: p.bookHtml, created: new Date().toISOString(), mandateId, via: 'mandate',
+      status: cap?.status === 'COMPLETED' ? 'captured' : `capture_${cap?.status}`, captureId: cap?.id, payer: o.payer?.payer_id });
+    m.orders.push({ orderId: o.id, proofId, at: Date.now() }); save();
+    session?.orders.add(o.id);
+    log('mandates.log', { charged: mandateId, orderId: o.id, capture: cap?.id, status: cap?.status });
+    if (cap?.status === 'COMPLETED') fulfil(o.id, cap.id);
+    return { order_id: o.id, amount: `$${PRODUCT.price}`, paypal_status: o.status, fulfilment: orders[o.id].status, mandate: mandateView(mandateId) };
+  },
+  async revokeMandate(mandateId, by) {
+    const m = mandates[mandateId];
+    if (!m || m.revoked) return mandateView(mandateId);
+    // PayPal-side delete needs the app's vault feature; either way we forget the vault id, so no further charge is possible
+    let paypal = 'deleted';
+    try { await pp.deleteVaultToken(m.vaultId); } catch (e) { paypal = `not deleted at PayPal (${e.status || e.message})`; }
+    Object.assign(m, { revoked: new Date().toISOString(), revokedBy: by, vaultId: null, paypalDelete: paypal });
+    save();
+    log('mandates.log', { revoked: mandateId, by, paypal });
+    return mandateView(mandateId);
   },
   orderOf: (id) => orders[id],
   async refund(orderId, reason, tool = refundTool) {
@@ -104,6 +174,8 @@ async function capture(id) {
   const c = await pp.captureOrder(id);
   const cap = c.purchase_units?.[0]?.payments?.captures?.[0];
   update(id, { status: cap?.status === 'COMPLETED' ? 'captured' : `capture_${cap?.status}`, captureId: cap?.id, payer: c.payer?.payer_id });
+  const vault = c.payment_source?.paypal?.attributes?.vault;
+  if (orders[id].saveWallet && vault?.id && vault.status === 'VAULTED' && !orders[id].mandateId) mintMandate(id, vault);
   // Our own server-to-server capture saying COMPLETED is final → start drawing now. The signed
   // PAYMENT.CAPTURE.COMPLETED webhook (~40 s later in sandbox) is the fallback path; fulfil() is idempotent.
   // A PENDING capture waits for the webhook.
@@ -115,6 +187,21 @@ async function capture(id) {
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
 const page = (body) => `<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>AtlasOfOne</title>
 <style>body{font:16px system-ui;max-width:34rem;margin:2rem auto;padding:0 1rem}</style>${body}`;
+const approvePage = (id, o) => `<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Approve · AtlasOfOne</title><link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600&family=Barlow+Condensed:wght@600;700&display=swap" rel="stylesheet"><link rel="stylesheet" href="/style.css">
+<header class="bar"><a class="logo" href="/"><svg viewBox="0 0 24 28" aria-hidden="true"><path d="M12 1 2 27h5l5-13 5 13h5z" fill="#0E1828"/><path d="M12 14 7 27h10z" fill="#F4AE45"/></svg>ATLAS OF <b>ONE</b></a><span class="pill">Sandbox demo</span></header>
+<main class="approve"><div class="card">
+<p class="kicker">Your assistant agent prepared this order</p>
+<div class="pages one"><img src="/p/${o.proofId}/cover.png" alt="Proof: ${esc(o.child)}'s cover"></div>
+<div class="checkout"><div class="line"><span>${esc(o.child)}'s Airport Mazes (PDF) · ${esc(label(byIcao(o.ident)))}</span><b class="amt">$${PRODUCT.price}</b></div></div>
+${o.saveWallet ? `<div class="consent"><b>Your agent also asked to reorder for you</b>
+<p>If you pay, PayPal saves your wallet for AtlasOfOne, and your agent may buy more books without asking you each time — within these limits:</p>
+<ul><li>$${PRODUCT.price} per book, this shop only — the agent cannot change the price</li><li>at most ${MANDATE.perDay} books a day</li><li>ends ${new Date(Date.now() + MANDATE.days * DAY).toISOString().slice(0, 10)}, or when you switch it off on your order page</li></ul>
+<p class="fine">Every reorder still gets a PayPal receipt, and the 14-day refund applies to each book.</p></div>` : ''}
+<a class="primary dl" href="${esc(o.paypalUrl)}">${o.saveWallet ? 'Agree and continue to PayPal' : 'Continue to PayPal'}</a>
+<p class="fine">For parents and gift-givers (18+). PayPal <b>sandbox</b> — no real money moves. <a href="/cancel">Cancel</a></p>
+</div></main></html>`;
 const readBody = (req) => new Promise((res) => { let b = ''; req.on('data', (d) => { if (b.length < 20000) b += d; }); req.on('end', () => res(b)); });
 const send = (res, code, body, type = 'text/html; charset=utf-8', extra = {}) => { res.writeHead(code, { 'Content-Type': type, 'Cache-Control': 'no-store', ...extra }); res.end(body); };
 const json = (res, code, obj) => send(res, code, JSON.stringify(obj), 'application/json');
@@ -180,7 +267,23 @@ const server = http.createServer(async (req, res) => {
     if (req.method === 'GET' && om) {
       const o = orders[om[1]];
       if (!o) return json(res, 404, null);
-      return json(res, 200, { status: o.status, child: o.child, ident: o.ident, download: o.status === 'ready' ? `/dl/${o.token}` : null, refundId: o.refundId || null });
+      return json(res, 200, { status: o.status, child: o.child, ident: o.ident, download: o.status === 'ready' ? `/dl/${o.token}` : null, refundId: o.refundId || null,
+        saveWallet: !!o.saveWallet, via: o.via || null, mandate: o.mandateId ? mandateView(o.mandateId) : null });
+    }
+    // the owner's off switch (on the order page); revoking only ever removes power, so the order link is enough
+    const rm = p.match(/^\/api\/orders\/([A-Z0-9]{10,20})\/revoke-mandate$/);
+    if (req.method === 'POST' && rm) {
+      const o = orders[rm[1]];
+      if (!o?.mandateId) return json(res, 404, { error: 'no mandate on this order' });
+      return json(res, 200, { mandate: await shop.revokeMandate(o.mandateId, 'owner (order page)') });
+    }
+    // consent page for agent-placed orders: what is bought, and what saving the wallet allows, before PayPal
+    const am = p.match(/^\/approve\/([A-Z0-9]{10,20})$/);
+    if (req.method === 'GET' && am) {
+      const o = orders[am[1]];
+      if (!o) return send(res, 404, page('<p>Unknown order.</p>'));
+      if (o.status !== 'created') return redirect(res, `/?order=${am[1]}`);
+      return send(res, 200, approvePage(am[1], o));
     }
 
     // legacy redirect flow (kept for the headless e2e script and redirect presentation)

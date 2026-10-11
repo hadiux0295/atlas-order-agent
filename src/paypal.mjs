@@ -68,19 +68,15 @@ export class PayPal {
 
   // Digital good: NO_SHIPPING (the toolkit's create_order can't set it, so orders are created here),
   // one line item so the PayPal review page shows what is being bought.
-  createOrder({ sku, description, amount, customId, returnUrl, cancelUrl, itemName }) {
+  // vault: true = save the buyer's PayPal wallet when the payment succeeds (they opted in to agent reorders);
+  // the capture response then carries payment_source.paypal.attributes.vault {id, customer.id}.
+  createOrder({ sku, description, amount, customId, returnUrl, cancelUrl, itemName, vault = false }) {
     return this.api('POST', '/v2/checkout/orders', {
       intent: 'CAPTURE',
-      purchase_units: [{
-        reference_id: sku,
-        custom_id: customId,
-        description,
-        amount: { currency_code: 'USD', value: amount, breakdown: { item_total: { currency_code: 'USD', value: amount } } },
-        items: [{ name: (itemName || description).slice(0, 127), quantity: '1', category: 'DIGITAL_GOODS', sku,
-          unit_amount: { currency_code: 'USD', value: amount } }],
-      }],
+      purchase_units: this.units({ sku, description, amount, customId, itemName }),
       payment_source: {
         paypal: {
+          ...(vault && { attributes: { vault: { store_in_vault: 'ON_SUCCESS', usage_type: 'MERCHANT', customer_type: 'CONSUMER' } } }),
           experience_context: {
             brand_name: 'AtlasOfOne',
             locale: 'en-US',
@@ -92,6 +88,29 @@ export class PayPal {
         },
       },
     }, { 'PayPal-Request-Id': crypto.randomUUID(), Prefer: 'return=representation' });
+  }
+
+  // Pay with a saved wallet: no redirect, the order comes back COMPLETED with the capture inline.
+  // requestId is required here (PayPal 400s without one) and makes a retry return the first result.
+  chargeVault({ vaultId, requestId, ...unit }) {
+    return this.api('POST', '/v2/checkout/orders', {
+      intent: 'CAPTURE', purchase_units: this.units(unit), payment_source: { paypal: { vault_id: vaultId } },
+    }, { 'PayPal-Request-Id': requestId, Prefer: 'return=representation' });
+  }
+
+  // Needs the app's "Save payment methods" feature; without it PayPal answers 403 and the caller's own
+  // revocation (forgetting the vault id) is what stops further charges.
+  deleteVaultToken(id) { return this.api('DELETE', `/v3/vault/payment-tokens/${id}`); }
+
+  units({ sku, description, amount, customId, itemName }) {
+    return [{
+      reference_id: sku,
+      custom_id: customId,
+      description,
+      amount: { currency_code: 'USD', value: amount, breakdown: { item_total: { currency_code: 'USD', value: amount } } },
+      items: [{ name: (itemName || description).slice(0, 127), quantity: '1', category: 'DIGITAL_GOODS', sku,
+        unit_amount: { currency_code: 'USD', value: amount } }],
+    }];
   }
 
   getOrder(id) { return this.api('GET', `/v2/checkout/orders/${id}`); }

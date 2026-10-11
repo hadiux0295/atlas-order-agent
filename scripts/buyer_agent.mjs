@@ -9,6 +9,8 @@
 //   --scripted       no model: walk the same MCP calls in a fixed order (tests the server end to end)
 //   --approve        sandbox only: approve on PayPal headlessly as the sandbox buyer (PAYPAL_ENV_FILE)
 //   --child <name> --airport <text>   inputs for --scripted
+//   --save-wallet    --scripted: ask the owner to let the agent reorder (mandate) on this first checkout
+//   --mandate <file> connect with the saved mandate token (Authorization: Bearer) — --scripted buys with it
 //   --out <dir>      log + downloaded zip (default ./buyer_runs/<utc stamp>)
 // Env: GEMINI_API_KEYS (model mode), AGENT_MODEL (gemini-3.5-flash), PAYPAL_ENV_FILE (--approve)
 import fs from 'node:fs';
@@ -24,7 +26,7 @@ import { approveOnPayPal } from './lib/approve.mjs';
 const argv = process.argv.slice(2);
 const flag = (k) => argv.includes(`--${k}`);
 const opt = (k, d) => { const i = argv.indexOf(`--${k}`); return i >= 0 ? argv[i + 1] : d; };
-const optKeys = new Set(['mcp', 'child', 'airport', 'out']);
+const optKeys = new Set(['mcp', 'child', 'airport', 'out', 'mandate']);
 const goal = argv.filter((a, i) => !a.startsWith('--') && !optKeys.has(argv[i - 1]?.slice(2))).join(' ')
   || 'Get a personalised airport maze book for my grandson Leo — he always flies out of Seattle.';
 const MCP_URL = opt('mcp', 'https://atlas.hun-is.com/mcp');
@@ -42,7 +44,7 @@ async function ownerApproves(url) {
     const env = loadEnvFile(process.env.PAYPAL_ENV_FILE);
     const back = await approveOnPayPal(url, {
       email: env.PAYPAL_SANDBOX_BUYER_EMAIL, password: env.PAYPAL_SANDBOX_BUYER_PASSWORD,
-      returnPrefix: new URL(MCP_URL).origin, shot: path.join(OUT, 'paypal_review.png'),
+      returnPrefix: new URL(MCP_URL).origin, shot: path.join(OUT, 'paypal_review.png'), shotConsent: path.join(OUT, 'shop_approve_page.png'),
     });
     say('owner', `approved on PayPal (sandbox buyer) → ${back.slice(0, 70)}`);
     return 'The owner approved the payment on PayPal.';
@@ -61,7 +63,13 @@ async function download(url) {
   return f;
 }
 
-const client = await createMCPClient({ transport: { type: 'http', url: MCP_URL }, name: 'family-assistant-agent' });
+// the mandate token is a credential: kept by this runtime, sent as a header, never shown to the model or logged
+const MANDATE_FILE = opt('mandate');
+const mandateToken = MANDATE_FILE ? JSON.parse(fs.readFileSync(MANDATE_FILE, 'utf8')).token : null;
+const client = await createMCPClient({
+  transport: { type: 'http', url: MCP_URL, ...(mandateToken && { headers: { Authorization: `Bearer ${mandateToken}` } }) },
+  name: 'family-assistant-agent',
+});
 const shopTools = await client.tools();
 say('agent', `connected to ${MCP_URL} — shop tools: ${Object.keys(shopTools).join(', ')}`);
 log({ goal, mcp: MCP_URL, tools: Object.keys(shopTools), mode: flag('scripted') ? 'scripted' : 'model' });
@@ -71,6 +79,12 @@ const call = async (name, input) => {
   say('→ shop', `${name} ${JSON.stringify(input)}`);
   const raw = await shopTools[name].execute(input, { toolCallId: name, messages: [] });
   const out = parse(raw);
+  if (out?.agent_mandate?.token) {
+    const f = path.join(OUT, 'mandate.json');
+    fs.writeFileSync(f, JSON.stringify({ token: out.agent_mandate.token, mcp: MCP_URL, saved: new Date().toISOString() }), { mode: 0o600 });
+    out.agent_mandate.token = `[kept by the agent runtime in ${path.basename(f)} — not shown to the model]`;
+    say('agent', `mandate token stored → ${f}`);
+  }
   log({ call: name, input, result: out });
   say('← shop', JSON.stringify(out).slice(0, 150));
   return out;
@@ -78,18 +92,33 @@ const call = async (name, input) => {
 
 let downloaded = null;
 try {
-  if (flag('scripted')) {
+  if (flag('scripted') && mandateToken) {
+    // reorder on the owner's mandate: no approval step
+    say('agent', `mandate: ${JSON.stringify(await call('mandate_status', {}))}`);
+    const airports = await call('find_airports', { query: opt('airport', 'Seattle') });
+    if (!Array.isArray(airports) || !airports.length) throw new Error('no airport');
+    const proof = await call('make_proof', { icao: airports[0].icao, child_name: opt('child', 'Leo') });
+    if (proof.error) throw new Error(proof.error);
+    const buy = await call('buy_with_mandate', { proof_id: proof.proof_id });
+    if (buy.error) throw new Error(buy.error);
+    for (let i = 0; i < 40; i++) {
+      const st = await call('check_order', { order_id: buy.order_id });
+      if (st.download_ready) { downloaded = await download(st.download_url); break; }
+      if (['failed', 'refunded'].includes(st.fulfilment)) throw new Error(`order ${st.fulfilment}`);
+      await new Promise((r) => setTimeout(r, 5000));
+    }
+  } else if (flag('scripted')) {
     const airports = await call('find_airports', { query: opt('airport', 'Seattle') });
     if (!Array.isArray(airports) || !airports.length) throw new Error('no airport');
     const proof = await call('make_proof', { icao: airports[0].icao, child_name: opt('child', 'Leo') });
     if (proof.error) throw new Error(proof.error);
     say('agent', `proof for the owner: ${proof.cover_url}`);
-    const co = await call('create_checkout', { proof_id: proof.proof_id });
+    const co = await call('create_checkout', { proof_id: proof.proof_id, ...(flag('save-wallet') && { save_wallet_for_agent: true }) });
     if (co.error) throw new Error(co.error);
     say('owner', await ownerApproves(co.approve_url));
     for (let i = 0; i < 40; i++) {
       const st = await call('check_order', { order_id: co.order_id });
-      if (st.download_ready) { downloaded = await download(st.download_url); break; }
+      if (st.download_ready && (!flag('save-wallet') || st.agent_mandate)) { downloaded = await download(st.download_url); break; }
       if (['failed', 'refunded'].includes(st.fulfilment)) throw new Error(`order ${st.fulfilment}`);
       await new Promise((r) => setTimeout(r, 5000));
     }
@@ -124,7 +153,7 @@ try {
       }),
     };
     const system = `You are a family assistant agent acting for your owner. You shop at merchant agents through their MCP tools.
-Rules: you never pay — only your owner approves a payment, through ask_owner with the approve_url. Before checkout, show the owner the proof (ask_owner with the cover_url). Never invent prices; use what the shop returns. After approval, poll check_order (use wait between checks) until download_ready, then save_download. Finish with one short summary for the owner.`;
+Rules: without a mandate you never pay — only your owner approves a payment, through ask_owner with the approve_url. If the owner asked you to be able to reorder on your own, set save_wallet_for_agent on that first checkout (the owner accepts the limits on approve_url). If this connection has a mandate (mandate_status), buy with buy_with_mandate instead and tell the owner afterwards. Before checkout, show the owner the proof (ask_owner with the cover_url). Never invent prices; use what the shop returns. After approval, poll check_order (use wait between checks) until download_ready, then save_download. Finish with one short summary for the owner.`;
     for (let k = 0; k < keys.length; k++) {
       try {
         const r = await generateText({

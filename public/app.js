@@ -132,10 +132,30 @@ function step(card, s, state) {
   });
 }
 
+// the owner's view of an agent mandate on this order: limits, and the off switch
+function mandateBox(card, orderId, m, via) {
+  let box = $('.mandate', card);
+  if (!box) { box = document.createElement('div'); box.className = 'mandate'; card.insertBefore(box, $('.fine', card)); }
+  const head = via === 'mandate' ? 'Bought by your agent with your saved PayPal.' : 'Your agent can reorder with your saved PayPal.';
+  if (m.active) {
+    box.innerHTML = `<b></b><br><span></span><br><button type="button" class="ghost">Switch off agent reorders</button>`;
+    $('b', box).textContent = head;
+    $('span', box).textContent = `Up to ${m.per_book} per book · ${m.books_per_day} a day (${m.used_today} used today) · ends ${m.ends} · AtlasOfOne only.`;
+    $('button', box).addEventListener('click', async () => {
+      const r = await (await fetch(`/api/orders/${orderId}/revoke-mandate`, { method: 'POST' })).json().catch(() => null);
+      if (r?.mandate) mandateBox(card, orderId, r.mandate, via);
+    });
+  } else {
+    const was = via === 'mandate' ? 'Bought by your agent with your saved PayPal. ' : '';
+    box.textContent = was + (m.revoked ? `Agent reorders switched off (${m.revoked.slice(0, 10)}) — your saved PayPal can no longer be charged by the agent.` : 'Agent reorders have ended.');
+  }
+}
+
 async function track(card, orderId) {
   for (let i = 0; i < 240; i++) {
     const o = await (await fetch(`/api/orders/${orderId}`)).json().catch(() => null);
     const st = o?.status;
+    if (o?.mandate && !$('.mandate', card)) mandateBox(card, orderId, o.mandate, o.via);
     if (st === 'created') step(card, 'pay', 'on');
     else if (st === 'captured') step(card, 'paid', 'on');
     else if (st === 'rendering') step(card, 'make', 'on');

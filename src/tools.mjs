@@ -15,8 +15,9 @@ const safe = (fn) => async (args) => {
 };
 
 // s = session { proofs:Set, orders:Set, cards:[], lastProof, lastOrder, proofInfo } · shop = server hooks ·
-// pp = PayPal Agent Toolkit tools (get_order · create_refund) · opts.maxOrders = per-session order cap
-export function toolSpecs({ shop, pp, s, maxOrders = Infinity }) {
+// pp = PayPal Agent Toolkit tools (get_order · create_refund) · maxOrders = per-session order cap ·
+// agent = the caller is another agent over MCP: adds the mandate tools (save wallet · buy · status)
+export function toolSpecs({ shop, pp, s, maxOrders = Infinity, agent = false }) {
   const cards = s.cards;
   const specs = {
     find_airports: {
@@ -48,15 +49,19 @@ export function toolSpecs({ shop, pp, s, maxOrders = Infinity }) {
     },
     create_checkout: {
       description: 'Create the PayPal order for an approved proof (default: the latest proof in this session). The price comes from the catalogue. Returns approve_url: the buyer opens it and pays on PayPal.',
-      inputSchema: z.object({ proof_id: z.string().optional().describe('omit to use the latest proof') }),
-      execute: async ({ proof_id }) => {
+      inputSchema: z.object({
+        proof_id: z.string().optional().describe('omit to use the latest proof'),
+        ...(agent && { save_wallet_for_agent: z.boolean().optional().describe('only when your owner asked to let you reorder without approving each time: their PayPal is saved for this shop, with limits they see and accept on approve_url before paying') }),
+      }),
+      execute: async ({ proof_id, save_wallet_for_agent }) => {
         if (!proof_id || !s.proofs.has(proof_id)) proof_id = s.lastProof;
         if (!proof_id) return { error: 'no proof in this session yet — make one first' };
         if (s.orders.size >= maxOrders) return { error: `order limit reached for this session (${maxOrders})` };
-        const c = await shop.createCheckout(proof_id, s);
+        const c = await shop.createCheckout(proof_id, s, { saveWallet: agent && !!save_wallet_for_agent });
         s.lastOrder = c.orderId;
         cards.push({ type: 'checkout', ...c });
-        return { order_id: c.orderId, amount: `$${c.amount}`, approve_url: c.approveUrl, next: 'the buyer approves the payment on PayPal (approve_url or the PayPal button on the card)' };
+        return { order_id: c.orderId, amount: `$${c.amount}`, approve_url: c.approveUrl, save_wallet_for_agent: c.saveWallet,
+          next: 'the buyer approves the payment (approve_url, or the PayPal button on the card)' };
       },
     },
     check_order: {
@@ -67,8 +72,12 @@ export function toolSpecs({ shop, pp, s, maxOrders = Infinity }) {
         if (!order_id) return { error: 'no order in this session yet' };
         const o = toolResult(await pp.get_order.execute({ id: order_id }, {}));
         const ours = shop.orderOf(order_id) || {};
+        // a freshly minted mandate token goes out once, to the session that placed the order
+        const token = agent && ours.mandateId ? shop.takeMandateToken(order_id) : null;
         return { order_id, paypal_status: o?.status, fulfilment: ours.status, download_ready: ours.status === 'ready',
-          ...(ours.status === 'ready' && { download_url: shop.abs(`/dl/${ours.token}`) }) };
+          ...(ours.status === 'ready' && { download_url: shop.abs(`/dl/${ours.token}`) }),
+          ...(agent && ours.mandateId && { agent_mandate: { ...shop.mandateView(ours.mandateId),
+            ...(token && { token, how_to_use: 'shown once: connect to this MCP server with the header Authorization: Bearer <token>, then buy_with_mandate' }) } }) };
       },
     },
     refund_order: {
@@ -83,6 +92,26 @@ export function toolSpecs({ shop, pp, s, maxOrders = Infinity }) {
       },
     },
   };
+  if (agent) Object.assign(specs, {
+    buy_with_mandate: {
+      description: "Buy a proof with your owner's saved PayPal wallet — no approval step. Needs the mandate token as the connection's Authorization: Bearer header; the shop enforces the owner's limits (price, books per day, end date).",
+      inputSchema: z.object({ proof_id: z.string().optional().describe('omit to use the latest proof') }),
+      execute: async ({ proof_id }) => {
+        if (!s.mandateId) return { error: s.badMandate ? 'the mandate token is not valid (revoked, ended or unknown)' : 'no mandate on this connection — use create_checkout and let your owner approve' };
+        if (!proof_id || !s.proofs.has(proof_id)) proof_id = s.lastProof;
+        if (!proof_id) return { error: 'no proof in this session yet — make one first' };
+        if (s.orders.size >= maxOrders) return { error: `order limit reached for this session (${maxOrders})` };
+        const r = await shop.buyWithMandate(proof_id, s, s.mandateId);
+        if (r.order_id) s.lastOrder = r.order_id;
+        return r;
+      },
+    },
+    mandate_status: {
+      description: "What this connection's mandate allows right now (limits, used today, end date) — or that there is none.",
+      inputSchema: z.object({}),
+      execute: async () => (s.mandateId ? shop.mandateView(s.mandateId) : { none: true, ...(s.badMandate && { note: 'token sent but not valid' }) }),
+    },
+  });
   for (const k of Object.keys(specs)) specs[k].execute = safe(specs[k].execute);
   return specs;
 }

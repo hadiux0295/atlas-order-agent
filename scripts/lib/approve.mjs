@@ -12,11 +12,17 @@ export function headlessShell() {
 }
 
 // → final URL after PayPal redirects back (startsWith returnPrefix)
-export async function approveOnPayPal(url, { email, password, returnPrefix, shot }) {
+// url may be the shop's own approve page (agent orders): read it, press its button, then PayPal.
+export async function approveOnPayPal(url, { email, password, returnPrefix, shot, shotConsent }) {
   const b = await chromium.launch({ executablePath: headlessShell(), args: ['--no-sandbox'] });
   const page = await b.newPage({ viewport: { width: 430, height: 932 }, locale: 'en-US' });
   try {
     await page.goto(url);
+    if (!/paypal\.com/.test(new URL(page.url()).host)) {
+      await page.waitForLoadState('networkidle').catch(() => {});
+      if (shotConsent) await page.screenshot({ path: shotConsent, fullPage: true });
+      await Promise.all([page.waitForURL(/paypal\.com/, { timeout: 30000 }), page.click('a.primary.dl')]);
+    }
     await page.locator('#email').fill(email, { timeout: 30000 });
     if (await page.locator('#btnNext').isVisible().catch(() => false)) await page.click('#btnNext');
     await page.locator('#password').fill(password, { timeout: 30000 });
