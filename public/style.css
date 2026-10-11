@@ -1,4 +1,5 @@
 :root{--ink:#0E1828;--ink2:#46505e;--blue:#2F80ED;--amber:#F4AE45;--paper:#F6F2EA;--card:#fff;--line:#e4ddd0;--ok:#1f9d55;--bad:#c2410c;--r:16px}
+[hidden]{display:none!important}
 *{box-sizing:border-box}
 html,body{margin:0;background:var(--paper);color:var(--ink);font:16px/1.5 Barlow,system-ui,sans-serif}
 button,input{font:inherit}
