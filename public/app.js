@@ -2,7 +2,7 @@
 const $ = (s, el = document) => el.querySelector(s);
 const log = $('#log'), form = $('#ask'), input = $('#text'), sendBtn = $('#send');
 const TOOL_LABEL = { find_airports: 'find_airports', make_proof: 'make_proof', create_checkout: 'create_checkout · Orders v2',
-  check_order: 'get_order · PayPal Agent Toolkit', refund_order: 'create_refund · PayPal Agent Toolkit', rules: 'rule-based reply' };
+  'create_checkout (guard)': 'create_checkout · Orders v2 (guard)', check_order: 'get_order · PayPal Agent Toolkit', refund_order: 'create_refund · PayPal Agent Toolkit', rules: 'rule-based reply' };
 
 let sid = null;
 try { sid = sessionStorage.getItem('aoo_sid'); } catch {}
@@ -23,14 +23,14 @@ function bubble(text, who) {
   return d;
 }
 
-async function say(text) {
+async function say(text, action) {
   text = text.trim();
   if (!text) return;
   bubble(text, 'me');
   input.value = ''; sendBtn.disabled = true; $('#chips').hidden = true;
   const t = document.createElement('div'); t.className = 'typing'; t.innerHTML = '<i></i><i></i><i></i>'; log.append(t); scroll();
   try {
-    const r = await fetch('/api/chat', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ sid, text }) });
+    const r = await fetch('/api/chat', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ sid, text, action }) });
     const j = await r.json();
     t.remove();
     if (j.steps?.length) {
@@ -63,7 +63,7 @@ function renderCard(c) {
     $('.maze', n).src = c.maze; $('.maze', n).alt = `Proof: a maze page at ${c.airport}`;
     $('.title', n).textContent = `${c.child}'s Airport Mazes`;
     $('.sub', n).textContent = `${c.airportName} · ${c.airport} · $${c.price} · watermark removed after payment`;
-    $('.ok', n).addEventListener('click', () => say("Looks good — let's check out."));
+    $('.ok', n).addEventListener('click', () => say("Looks good — let's check out.", 'checkout'));
     $('.change', n).addEventListener('click', () => { input.value = 'Please change '; input.focus(); });
     log.append(n); n.querySelectorAll('img').forEach((i) => i.addEventListener('load', scroll));
   } else if (c.type === 'checkout') {

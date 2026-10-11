@@ -143,10 +143,10 @@ const server = http.createServer(async (req, res) => {
     if (req.method === 'POST' && p === '/api/chat') {
       const ip = req.headers['cf-connecting-ip'] || req.socket.remoteAddress;
       if (limited(ip)) return json(res, 429, { reply: 'Too many messages — please wait a few minutes.' });
-      const { sid, text } = JSON.parse((await readBody(req)) || '{}');
+      const { sid, text, action } = JSON.parse((await readBody(req)) || '{}');
       if (!/^[0-9a-f]{16,32}$/.test(sid || '') || !String(text || '').trim()) return json(res, 400, { error: 'bad request' });
       const t0 = Date.now();
-      const r = await agent.chat(sid, text);
+      const r = await agent.chat(sid, text, action === 'checkout' ? 'checkout' : null);
       log('chat.log', { sid, text: String(text).slice(0, 300), reply: r.reply.slice(0, 300), steps: r.steps, ms: Date.now() - t0, model: r.model });
       return json(res, 200, r);
     }

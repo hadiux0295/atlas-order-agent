@@ -129,9 +129,23 @@ export class ShopAgent {
   }
 
   // → { reply, cards, steps, model }
-  async chat(sessionId, text) {
+  // A button press is a decision, not a sentence to interpret: checkout runs without the model.
+  async checkoutAction(s) {
+    const c = await this.shop.createCheckout(s.lastProof, s);
+    s.lastOrder = c.orderId;
+    s.cards.push({ type: 'checkout', ...c });
+    return c;
+  }
+
+  async chat(sessionId, text, action) {
     const s = this.session(sessionId);
     s.cards.length = 0;
+    if (action === 'checkout' && s.lastProof) {
+      await this.checkoutAction(s);
+      const reply = 'Here is your checkout — pay with the PayPal button on the card.';
+      s.messages.push({ role: 'user', content: 'Looks good — check out.' }, { role: 'assistant', content: `${reply} (order created)` });
+      return { reply, cards: [...s.cards], steps: ['create_checkout'], model: null };
+    }
     s.messages.push({ role: 'user', content: String(text).slice(0, 1000) });
     for (let tries = 0; tries < this.providers.length; tries++) {
       const google = this.providers[this.keyIdx];
@@ -143,6 +157,11 @@ export class ShopAgent {
         });
         s.messages.push(...r.response.messages);
         const steps = r.steps.flatMap((st) => st.toolCalls.map((c) => c.toolName));
+        // claim guard: the model said "checkout/PayPal button" but never created one → do it, don't leave a false promise
+        if (/check ?out|paypal button/i.test(r.text || '') && !s.cards.some((c) => c.type === 'checkout') && s.lastProof && !s.orders.size) {
+          await this.checkoutAction(s);
+          steps.push('create_checkout (guard)');
+        }
         return { reply: r.text || '', cards: [...s.cards], steps, model: MODEL };
       } catch (e) {
         const quota = /quota|rate|429|RESOURCE_EXHAUSTED/i.test(String(e.message) + (e.statusCode || ''));
