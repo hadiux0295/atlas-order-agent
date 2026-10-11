@@ -8,6 +8,7 @@ import { PayPalAgentToolkit } from '@paypal/agent-toolkit/ai-sdk';
 import { PRODUCT, AIRPORTS, label } from './catalog.mjs';
 import { readBrief } from './brief.mjs';
 import { toolSpecs, toolResult } from './tools.mjs';
+import { guardShouldCheckout } from './guard.mjs';
 
 export { toolResult };
 
@@ -86,13 +87,8 @@ export class ShopAgent {
         });
         s.messages.push(...r.response.messages);
         const steps = r.steps.flatMap((st) => st.toolCalls.map((c) => c.toolName));
-        // claim guard: the model said "checkout/PayPal button" but never created one → do it, don't leave a false promise.
-        // A reply that still asks the buyer to confirm ("let me know and I'll set up checkout") is not a claim,
-        // and neither is a turn that just made the proof: the buyer hasn't seen it, so nothing can be approved yet
-        // ("please check out the proof card above" = look at it).
-        const asking = /let me know|if you(?:'re| are)? (?:happy|ok|okay|ready|like)|would you like|shall i|should i|once you|ready to (?:check|order|pay)\?/i;
-        const proofThisTurn = s.cards.some((c) => c.type === 'proof');
-        if (/check ?out|paypal button/i.test(r.text || '') && !asking.test(r.text || '') && !proofThisTurn && !s.cards.some((c) => c.type === 'checkout') && s.lastProof && !s.orders.size) {
+        // claim guard (guard.mjs): a promised checkout that was never created is created, never left as a false promise
+        if (guardShouldCheckout(r.text, s.cards, s)) {
           await this.checkoutAction(s);
           steps.push('create_checkout (guard)');
         }

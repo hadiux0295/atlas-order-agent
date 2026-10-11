@@ -100,6 +100,8 @@ On a public URL, set `PUBLIC_URL=https://your.host` and leave `SKIP_WEBHOOK` uns
 ### Test scripts
 
 ```bash
+# unit tests (no network): the claim guard replays every real model reply that once fired it by mistake
+npm test
 # the chat front, headless: brief → proof → PayPal popup → sandbox buyer login → approve → download
 PAYPAL_ENV_FILE=… BASE_URL=http://localhost:8742 node scripts/e2e_chat.mjs "Leo, 6, flies from JFK"
 # the redirect flow
@@ -116,7 +118,8 @@ node scripts/buyer_agent.mjs --mcp http://localhost:8742/mcp --scripted --child 
 
 ```
 src/server.mjs    HTTP server: chat API, proofs, orders, capture, webhooks, downloads, mandates
-src/agent.mjs     the shop agent (Gemini via AI SDK 7) + rule path + claim guard
+src/agent.mjs     the shop agent (Gemini via AI SDK 7) + rule path
+src/guard.mjs     claim guard: a promised checkout that was never created gets created (test/guard.test.mjs)
 src/tools.mjs     the guarded tools, shared by the chat agent and the MCP server
 src/mcp.mjs       MCP server (Streamable HTTP, one shop session per MCP session)
 src/paypal.mjs    OAuth, Orders v2, client token, vault, webhook setup + signature verification

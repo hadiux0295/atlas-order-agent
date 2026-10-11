@@ -5,7 +5,8 @@
   "type": "module",
   "license": "MIT",
   "scripts": {
-    "start": "node src/server.mjs"
+    "start": "node src/server.mjs",
+    "test": "node --test test/*.test.mjs"
   },
   "dependencies": {
     "@ai-sdk/google": "^4.0.93",
