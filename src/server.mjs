@@ -77,7 +77,7 @@ refundTool = agent.pp.create_refund;
 // ── fulfilment: runs once per capture id; a failed render refunds automatically (unhappy path) ──
 async function fulfil(orderId, captureId) {
   const o = orders[orderId];
-  if (!o || o.captureId === captureId && ['rendering', 'ready', 'refunded'].includes(o.status)) return;
+  if (!o || o.captureId === captureId && ['rendering', 'ready', 'failed', 'refunded'].includes(o.status)) return;
   update(orderId, { status: 'rendering', captureId });
   try {
     const t0 = Date.now();
@@ -96,6 +96,10 @@ async function capture(id) {
   const c = await pp.captureOrder(id);
   const cap = c.purchase_units?.[0]?.payments?.captures?.[0];
   update(id, { status: cap?.status === 'COMPLETED' ? 'captured' : `capture_${cap?.status}`, captureId: cap?.id, payer: c.payer?.payer_id });
+  // Our own server-to-server capture saying COMPLETED is final → start drawing now. The signed
+  // PAYMENT.CAPTURE.COMPLETED webhook (~40 s later in sandbox) is the fallback path; fulfil() is idempotent.
+  // A PENDING capture waits for the webhook.
+  if (cap?.status === 'COMPLETED') fulfil(id, cap.id);
   return orders[id];
 }
 
