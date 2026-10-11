@@ -79,7 +79,7 @@ function renderCard(c) {
     if (card) {
       $('.dl', card).hidden = true;
       $('.refund', card)?.remove();
-      $('.hint', card).textContent = `Refunded in full · ${c.refundId}`;
+      setHint(card, `Refunded in full · ${c.refundId}`);
       card.querySelectorAll('.steps li').forEach((li) => (li.className = ''));
     }
   }
@@ -162,9 +162,16 @@ function refundButton(card, orderId) {
     b.disabled = true;
     const r = await (await fetch(`/api/orders/${orderId}/refund`, { method: 'POST' })).json().catch(() => ({}));
     if (r.refundId) renderCard({ type: 'refund', orderId, refundId: r.refundId, status: r.status });
-    else { b.disabled = false; $('.hint', card).textContent = r.error || 'Refund failed — please try again.'; }
+    else { b.disabled = false; setHint(card, r.error || 'Refund failed — please try again.'); }
   });
   card.insertBefore(b, $('.fine', card));
+}
+
+// the return-page card has no .pay/.hint block — create the line instead of throwing
+function setHint(card, text) {
+  let h = $('.hint', card);
+  if (!h) { h = document.createElement('p'); h.className = 'hint'; card.insertBefore(h, $('.fine', card)); }
+  h.textContent = text;
 }
 
 async function track(card, orderId) {
@@ -177,12 +184,12 @@ async function track(card, orderId) {
     else if (st === 'rendering') step(card, 'make', 'on');
     else if (st === 'ready') {
       step(card, 'ready', 'done'); card.querySelectorAll('.steps li').forEach((li) => (li.className = 'done'));
-      const a = $('.dl', card); a.href = o.download; a.hidden = false; $('.hint', card).textContent = `Paid · order ${orderId}`;
+      const a = $('.dl', card); a.href = o.download; a.hidden = false; setHint(card, `Paid · order ${orderId}`);
       refundButton(card, orderId);
       bubble(`${o.child}'s book is ready! Print it on Letter or A4 — have fun at the airport. ✈`, 'bot');
       return;
     } else if (st === 'refunded' || st === 'failed') {
-      $('.hint', card).textContent = st === 'refunded' ? `Refunded in full (${o.refundId}).` : 'Something went wrong — a full refund is on its way.';
+      setHint(card, st === 'refunded' ? `Refunded in full (${o.refundId}).` : 'Something went wrong — a full refund is on its way.');
       return;
     }
     await new Promise((r) => setTimeout(r, 2000));
