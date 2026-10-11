@@ -3,7 +3,7 @@
 export const PRODUCT = {
   sku: 'taxiway-maze-book',
   title: 'Personalised Airport Maze Book',
-  blurb: '3 mazes on the real taxiways of your airport, a colouring page, a pilot certificate with their name, answer keys. Printable PDF (Letter + A4), ages 4–8.',
+  blurb: '2–3 mazes on the real taxiways of your airport (how many depends on its layout; the proof cover shows the count), a colouring page, a pilot certificate with their name, answer keys. Printable PDF (Letter + A4), ages 4–8.',
   price: '9.99',
   currency: 'USD',
 };
