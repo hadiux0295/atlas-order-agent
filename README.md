@@ -105,10 +105,12 @@ PAYPAL_ENV_FILE=… BASE_URL=http://localhost:8742 node scripts/e2e_chat.mjs "Le
 # the redirect flow
 PAYPAL_ENV_FILE=… BASE_URL=… node scripts/e2e_sandbox.mjs Leo KJFK
 # a second agent buying over MCP (scripted, or model-driven with GEMINI_API_KEYS)
-node scripts/buyer_agent.mjs --mcp http://localhost:8742/mcp --scripted --child Leo --airport JFK --approve --save-wallet
+node scripts/buyer_agent.mjs --mcp http://localhost:8742/mcp --scripted --child Leo --airport JFK --approve --save-wallet --out runs/first
+# …then the same agent reorders alone with the mandate it was given (no approval step)
+node scripts/buyer_agent.mjs --mcp http://localhost:8742/mcp --scripted --child Mia --airport JFK --mandate runs/first/mandate.json
 ```
 
-`e2e_chat.mjs` and `--approve` log in as the sandbox buyer account (`PAYPAL_ENV_FILE`). Measured: hosted demo brief → download **28.6 s** (6 s after approval); this public build locally **21.8 s**.
+`e2e_chat.mjs` and `--approve` log in as the sandbox buyer account (`PAYPAL_ENV_FILE`). Measured: hosted demo brief → download **28.6 s** (6 s after approval); this public build locally **21.8 s** (chat) · from a fresh clone over MCP, first order with saved wallet **17 s**, mandate reorder **12 s** with no approval.
 
 ## Code map
 
