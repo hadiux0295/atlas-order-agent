@@ -350,4 +350,7 @@ const server = http.createServer(async (req, res) => {
 });
 
 webhookId = process.env.SKIP_WEBHOOK ? 'local-dev' : await pp.ensureWebhook(`${PUBLIC_URL}/webhook`, EVENTS);
+// Playwright installs a SIGTERM handler that closes its browsers but never exits, which cancels Node's default
+// exit: a plain `kill` left the server running (lex-1059). Stores are written on every change, so exit after the close.
+process.on('SIGTERM', () => setTimeout(() => process.exit(0), 1500));
 server.listen(PORT, '127.0.0.1', () => console.log(`listening :${PORT} · public ${PUBLIC_URL} · webhook ${webhookId} · model ${agent.google ? MODEL : 'none (rules)'}`));
