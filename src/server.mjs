@@ -203,11 +203,19 @@ const server = http.createServer(async (req, res) => {
       try { ok = await pp.verifyWebhook(req.headers, raw, webhookId); } catch (e) { err = e.message; }
       const ev = JSON.parse(raw);
       const r = ev.resource || {};
-      const orderId = r.supplementary_data?.related_ids?.order_id || (ev.event_type.startsWith('CHECKOUT.ORDER') ? r.id : null);
+      // refund events carry no order id: follow the refund's `up` link to its capture
+      const upCapture = (r.links || []).find((l) => l.rel === 'up')?.href?.match(/captures\/([A-Z0-9]+)/)?.[1];
+      const orderId = r.supplementary_data?.related_ids?.order_id || (ev.event_type.startsWith('CHECKOUT.ORDER') ? r.id : null)
+        || (upCapture && Object.keys(orders).find((k) => orders[k].captureId === upCapture)) || null;
       log('webhooks.log', { event: ev.event_type, id: ev.id, orderId, verified: ok, err });
       send(res, 200, '', 'text/plain'); // ack fast; PayPal retries non-2xx
       if (ok && ev.event_type === 'PAYMENT.CAPTURE.COMPLETED' && orders[orderId]) fulfil(orderId, r.id);
-      if (ok && ev.event_type === 'PAYMENT.CAPTURE.REFUNDED' && orders[orderId]) update(orderId, { refundConfirmed: ev.id });
+      if (ok && ev.event_type === 'PAYMENT.CAPTURE.REFUNDED' && orders[orderId]) {
+        // reconcile: a refund made anywhere (agent, PayPal dashboard) closes the download
+        const o = orders[orderId];
+        if (o.token) fs.rmSync(path.join(DATA, 'dl', `${o.token}.zip`), { force: true });
+        update(orderId, { status: 'refunded', refundId: o.refundId || r.id, refundConfirmed: ev.id, token: null });
+      }
       return;
     }
 
