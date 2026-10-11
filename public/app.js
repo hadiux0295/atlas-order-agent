@@ -78,6 +78,7 @@ function renderCard(c) {
     const card = log.querySelector(`.card.checkout[data-order="${c.orderId}"]`);
     if (card) {
       $('.dl', card).hidden = true;
+      $('.refund', card)?.remove();
       $('.hint', card).textContent = `Refunded in full · ${c.refundId}`;
       card.querySelectorAll('.steps li').forEach((li) => (li.className = ''));
     }
@@ -151,6 +152,21 @@ function mandateBox(card, orderId, m, via) {
   }
 }
 
+// 14-day refund straight from the order page (agent-bought books included)
+function refundButton(card, orderId) {
+  if ($('.refund', card)) return;
+  const b = document.createElement('button');
+  b.type = 'button'; b.className = 'ghost refund'; b.textContent = 'Refund this book';
+  b.addEventListener('click', async () => {
+    if (!confirm('Refund this book in full? The download link stops working.')) return;
+    b.disabled = true;
+    const r = await (await fetch(`/api/orders/${orderId}/refund`, { method: 'POST' })).json().catch(() => ({}));
+    if (r.refundId) renderCard({ type: 'refund', orderId, refundId: r.refundId, status: r.status });
+    else { b.disabled = false; $('.hint', card).textContent = r.error || 'Refund failed — please try again.'; }
+  });
+  card.insertBefore(b, $('.fine', card));
+}
+
 async function track(card, orderId) {
   for (let i = 0; i < 240; i++) {
     const o = await (await fetch(`/api/orders/${orderId}`)).json().catch(() => null);
@@ -162,6 +178,7 @@ async function track(card, orderId) {
     else if (st === 'ready') {
       step(card, 'ready', 'done'); card.querySelectorAll('.steps li').forEach((li) => (li.className = 'done'));
       const a = $('.dl', card); a.href = o.download; a.hidden = false; $('.hint', card).textContent = `Paid · order ${orderId}`;
+      refundButton(card, orderId);
       bubble(`${o.child}'s book is ready! Print it on Letter or A4 — have fun at the airport. ✈`, 'bot');
       return;
     } else if (st === 'refunded' || st === 'failed') {

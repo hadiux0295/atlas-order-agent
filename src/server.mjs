@@ -200,7 +200,7 @@ ${o.saveWallet ? `<div class="consent"><b>Your agent also asked to reorder for y
 <ul><li>$${PRODUCT.price} per book, this shop only — the agent cannot change the price</li><li>at most ${MANDATE.perDay} books a day</li><li>ends ${new Date(Date.now() + MANDATE.days * DAY).toISOString().slice(0, 10)}, or when you switch it off on your order page</li></ul>
 <p class="fine">Every reorder still gets a PayPal receipt, and the 14-day refund applies to each book.</p></div>` : ''}
 <a class="primary dl" href="${esc(o.paypalUrl)}">${o.saveWallet ? 'Agree and continue to PayPal' : 'Continue to PayPal'}</a>
-<p class="fine">For parents and gift-givers (18+). PayPal <b>sandbox</b> — no real money moves. <a href="/cancel">Cancel</a></p>
+<p class="fine">This order was put together by an AI agent acting for you, through our shop's agent interface. The proof is drawn by our shop, and the price and limits are set by the shop — not by any AI. Full refund within 14 days, from your order page. For parents and gift-givers (18+). PayPal <b>sandbox</b> — no real money moves. <a href="/cancel">Cancel</a></p>
 </div></main></html>`;
 const readBody = (req) => new Promise((res) => { let b = ''; req.on('data', (d) => { if (b.length < 20000) b += d; }); req.on('end', () => res(b)); });
 const send = (res, code, body, type = 'text/html; charset=utf-8', extra = {}) => { res.writeHead(code, { 'Content-Type': type, 'Cache-Control': 'no-store', ...extra }); res.end(body); };
@@ -276,6 +276,12 @@ const server = http.createServer(async (req, res) => {
       const o = orders[rm[1]];
       if (!o?.mandateId) return json(res, 404, { error: 'no mandate on this order' });
       return json(res, 200, { mandate: await shop.revokeMandate(o.mandateId, 'owner (order page)') });
+    }
+    // refund from the order page (the order link is the buyer's receipt; 14-day rule enforced in shop.refund)
+    const fm = p.match(/^\/api\/orders\/([A-Z0-9]{10,20})\/refund$/);
+    if (req.method === 'POST' && fm) {
+      if (!orders[fm[1]]) return json(res, 404, { error: 'unknown order' });
+      return json(res, 200, await shop.refund(fm[1], 'requested on the order page'));
     }
     // consent page for agent-placed orders: what is bought, and what saving the wallet allows, before PayPal
     const am = p.match(/^\/approve\/([A-Z0-9]{10,20})$/);

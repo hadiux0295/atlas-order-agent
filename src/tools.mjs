@@ -84,7 +84,9 @@ export function toolSpecs({ shop, pp, s, maxOrders = Infinity, agent = false }) 
       description: 'Refund a paid order from this session in full (default: the latest one) — wrong name, changed mind. The book link stops working.',
       inputSchema: z.object({ order_id: z.string().optional(), reason: z.string() }),
       execute: async ({ order_id, reason }) => {
-        if (!order_id || !s.orders.has(order_id)) order_id = s.lastOrder;
+        // an agent with the owner's mandate may also refund books bought with that mandate in earlier sessions
+        const mine = (id) => s.orders.has(id) || (agent && s.mandateId && shop.orderOf(id)?.mandateId === s.mandateId);
+        if (!order_id || !mine(order_id)) order_id = s.lastOrder;
         if (!order_id) return { error: 'no order in this session yet' };
         const r = await shop.refund(order_id, reason, pp.create_refund);
         if (r.refundId) cards.push({ type: 'refund', orderId: order_id, ...r });
