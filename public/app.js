@@ -70,10 +70,17 @@ function renderCard(c) {
     const n = $('#t-checkout').content.firstElementChild.cloneNode(true);
     $('.what', n).textContent = `${c.child}'s Airport Mazes (PDF)`;
     $('.amt', n).textContent = `$${c.amount}`;
+    n.dataset.order = c.orderId;
     log.append(n); scroll();
     mountPayPal(n, c.orderId);
   } else if (c.type === 'refund') {
     bubble(`Refund ${c.refundId} · ${c.status}`, 'bot');
+    const card = log.querySelector(`.card.checkout[data-order="${c.orderId}"]`);
+    if (card) {
+      $('.dl', card).hidden = true;
+      $('.hint', card).textContent = `Refunded in full · ${c.refundId}`;
+      card.querySelectorAll('.steps li').forEach((li) => (li.className = ''));
+    }
   }
 }
 
