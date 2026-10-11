@@ -5,7 +5,7 @@
 import { generateText, tool, stepCountIs } from 'ai';
 import { createGoogleGenerativeAI } from '@ai-sdk/google';
 import { PayPalAgentToolkit } from '@paypal/agent-toolkit/ai-sdk';
-import { PRODUCT, label } from './catalog.mjs';
+import { PRODUCT, AIRPORTS, label } from './catalog.mjs';
 import { readBrief } from './brief.mjs';
 import { toolSpecs, toolResult } from './tools.mjs';
 
@@ -112,7 +112,8 @@ export class ShopAgent {
   // No model: read the brief, remember what we know, proof as soon as both are known.
   async rulePath(s, text) {
     const b = readBrief(text);
-    b.airports = b.airports.filter((a) => this.shop.available(a.icao));
+    const named = b.airports;
+    b.airports = named.filter((a) => this.shop.available(a.icao));
     s.known = { ...s.known, ...(b.child && { child: b.child }), ...(b.airports.length === 1 && { icao: b.airports[0].icao }) };
     let reply;
     if (/\b(yes|buy|looks good|approve|perfect|great|ok)\b/i.test(text) && s.lastProof) {
@@ -126,7 +127,10 @@ export class ShopAgent {
       s.cards.push({ type: 'proof', ...p });
       reply = `Here is ${p.child}'s proof for ${p.airport}. Happy with it? Say "yes" to check out.`;
     } else if (b.airports.length > 1) reply = `Which one: ${b.airports.map(label).join(', ')}?`;
-    else if (!s.known?.icao) reply = 'Which airport do you fly from? A city or a code like LAX works.';
+    else if (!s.known?.icao && (named.length || /\bwhich airports\b|\bwhat airports\b/i.test(text))) {
+      const drawable = AIRPORTS.filter((a) => this.shop.available(a.icao)).map(label).join(', ');
+      reply = `${named.length ? `We can't draw ${named.map(label).join(', ')} yet. ` : ''}Today we draw: ${drawable}.`;
+    } else if (!s.known?.icao) reply = 'Which airport do you fly from? A city or a code like LAX works.';
     else reply = "What's the child's first name, exactly as it should be printed?";
     s.messages.push({ role: 'assistant', content: reply });
     return { reply, cards: [...s.cards], steps: ['rules'], model: null };

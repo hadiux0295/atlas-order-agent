@@ -1,7 +1,7 @@
 // AtlasOfOne Order Agent: chat brief → watermarked proof → PayPal (JS SDK v6 button) → capture →
 // verified PAYMENT.CAPTURE.COMPLETED webhook → render → zip → download link. Refunds via the PayPal Agent Toolkit.
 // MCP: /mcp (Streamable HTTP) exposes the same tools to other agents (mcp.mjs).
-// Env: PAYPAL_ENV_FILE, PUBLIC_URL, PORT (8742), DATA_DIR (./data), RENDERER, PIPELINE_ROOT, GEMINI_API_KEY,
+// Env: PAYPAL_ENV_FILE, PUBLIC_URL, PORT (8742), DATA_DIR (./data), RENDERER (public = one airport, SAMPLE PDFs · private), PIPELINE_ROOT, GEMINI_API_KEY,
 //      AGENT_MODEL, SKIP_WEBHOOK=1 (local dev: never re-point the app's one webhook at localhost).
 import http from 'node:http';
 import fs from 'node:fs';
@@ -297,6 +297,7 @@ const server = http.createServer(async (req, res) => {
       const f = new URLSearchParams(await readBody(req));
       const child = (f.get('child') || '').trim(), ident = (f.get('ident') || '').trim().toUpperCase();
       if (!NAME_RE.test(child) || !byIcao(ident)) return send(res, 400, page('<p>Check the name and the airport code.</p>'));
+      if (!shop.available(ident)) return send(res, 400, page('<p>We can’t draw that airport in this build yet.</p>'));
       const pr = await shop.makeProof(ident, child, null);
       const c = await shop.createCheckout(pr.proofId, null);
       const o = await pp.getOrder(c.orderId);

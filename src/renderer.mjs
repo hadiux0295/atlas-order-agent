@@ -1,8 +1,10 @@
 // Renderer adapter. RENDERER=private calls the AtlasOfOne production pipeline (not part of this repo,
-// located by PIPELINE_ROOT); RENDERER=public will be the reduced, watermarked one-airport renderer.
+// located by PIPELINE_ROOT); public (default) prints the approved proof book from the one bundled airport,
+// watermarked SAMPLE on every page — the open-source build demonstrates the checkout, it does not sell books.
 import { spawn } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
+import { mode, getBrowser, watermark } from './proof.mjs';
 
 function run(cmd, args, opts) {
   return new Promise((resolve, reject) => {
@@ -41,10 +43,32 @@ async function renderPrivate(order) {
   return fs.readdirSync(dir).filter((f) => f.endsWith('.pdf')).map((f) => path.join(dir, f));
 }
 
+// Same page setup as the pipeline's render.mjs: Letter uses the book's own @page size, A4 overrides it.
+async function renderPublic(order) {
+  if (!order.bookHtml || !fs.existsSync(order.bookHtml)) throw new Error('public renderer: order has no approved proof book');
+  const dir = path.dirname(order.bookHtml), base = path.basename(order.bookHtml, '.html');
+  const b = await getBrowser();
+  const page = await b.newPage({ viewport: { width: 816, height: 1056 } });
+  try {
+    await page.goto('file://' + order.bookHtml, { waitUntil: 'load' });
+    await page.evaluate(() => document.fonts.ready);
+    await page.addStyleTag({ content: watermark('SAMPLE · AtlasOfOne open-source build') });
+    await page.emulateMedia({ media: 'print' });
+    const out = [];
+    for (const p of ['letter', 'a4']) {
+      const pdf = path.join(dir, `${base}_${p}_sample.pdf`);
+      if (p === 'a4') await page.addStyleTag({ content: '@page{size:210mm 297mm;margin:0} .page{width:210mm;height:297mm}' });
+      await page.pdf({ path: pdf, format: p === 'a4' ? 'A4' : 'Letter', printBackground: true, preferCSSPageSize: p === 'letter', margin: { top: 0, bottom: 0, left: 0, right: 0 } });
+      out.push(pdf);
+    }
+    return out;
+  } finally {
+    await page.close();
+  }
+}
+
 export async function render(order) {
-  const mode = process.env.RENDERER || 'public';
-  if (mode === 'private') return renderPrivate(order);
-  throw new Error('public renderer not built yet');
+  return mode() === 'private' ? renderPrivate(order) : renderPublic(order);
 }
 
 export async function zip(files, outZip) {
