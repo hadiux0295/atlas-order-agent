@@ -2,7 +2,7 @@
 
 **A small shop's own AI agent that takes an order from a one-line brief to a paid, delivered product, with PayPal handling every step where money moves.**
 
-Live sandbox demo: **https://atlas.hun-is.com** (PayPal sandbox; no real money moves) · MCP endpoint for other agents: `https://atlas.hun-is.com/mcp`
+Demo video (2 min): **https://www.youtube.com/watch?v=fYUCuFLiLPA** · Live sandbox demo: **https://atlas.hun-is.com** (PayPal sandbox; no real money moves) · MCP endpoint for other agents: `https://atlas.hun-is.com/mcp`
 
 AtlasOfOne sells one thing: a personalised, printable maze book for kids (ages 4–8), drawn on the real taxiways of the airport the family flies from. A parent types *"My 5-year-old Mia loves planes, we fly out of LAX"*. The agent finds the airport, renders a watermarked proof of the real cover with the child's name, and opens a PayPal checkout once the parent approves the proof. When the capture completes, the shop prints the book and hands over the download. Refunds, order status and reorders go through the same agent.
 
